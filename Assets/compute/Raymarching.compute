@@ -1,0 +1,158 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> Result;
+float4x4 CamToWorld;
+float4x4 CamInverseProjection;
+float4x4 ObjectRotateInverseMatrix;
+float3 ObjectPos;
+
+#define MAX_STEPS 100
+#define MIN_HIT_DIST 0.001f
+#define MAX_TRACE_DIST 100
+
+float GetDistFromCube(float3 pos, float3 size)
+{
+    float3 o = abs(pos) - size;
+    float ud = length(max(o, 0));
+    float n = max(max(min(o.x, 0), min(o.y, 0)), min(o.z, 0));
+    return ud + n;
+}
+
+float GetDistFromSphere(float3 pos, float radius)
+{
+    return length(pos) - radius;
+}
+
+float GetDistFromCylinderY(float3 pos, float2 h)
+{
+    float2 d = abs(float2(length((pos).xz), pos.y)) - h;
+    return length(max(d, 0)) + max(min(d.x, 0), min(d.y, 0));
+}
+
+float GetDistFromCylinderX(float3 pos, float2 h)
+{
+    float2 d = abs(float2(length((pos).yz), pos.x)) - h;
+    return length(max(d, 0)) + max(min(d.x, 0), min(d.y, 0));
+}
+
+float GetDistFromCylinderZ(float3 pos, float2 h)
+{
+    float2 d = abs(float2(length((pos).xy), pos.z)) - h;
+    return length(max(d, 0)) + max(min(d.x, 0), min(d.y, 0));
+}
+
+float intersectSDF(float distA, float distB) {
+    return max(distA, distB);
+}
+
+float unionSDF(float distA, float distB) {
+    return min(distA, distB);
+}
+
+float differenceSDF(float distA, float distB) {
+    return max(distA, -distB);
+}
+
+float SceneSDF(float3 pos)
+{
+    pos = pos - ObjectPos;
+    pos = mul(ObjectRotateInverseMatrix, float4(pos, 1.0)).xyz;
+
+    float dC = GetDistFromCube(pos, float3(0.4, 0.4, 0.4));
+    float dS = GetDistFromSphere(pos, 0.5);
+    float dCyX = GetDistFromCylinderX(pos, float2(0.3, 0.5));
+    float dCyY = GetDistFromCylinderY(pos, float2(0.3, 0.5));
+    float dCyZ = GetDistFromCylinderZ(pos, float2(0.3, 0.5));
+
+    float sdCyX = GetDistFromCylinderX(pos, float2(0.1, 0.4));
+    float sdCyY = GetDistFromCylinderY(pos, float2(0.1, 0.4));
+    float sdCyZ = GetDistFromCylinderZ(pos, float2(0.1, 0.4));
+
+    float ssdCyX = GetDistFromCylinderX(pos, float2(0.08, 0.5));
+    float ssdCyY = GetDistFromCylinderY(pos, float2(0.08, 0.5));
+    float ssdCyZ = GetDistFromCylinderZ(pos, float2(0.08, 0.5));
+
+    float sdS = GetDistFromSphere(pos, 0.2);
+    float ssdS = GetDistFromSphere(pos, 0.1);
+
+    //float sDs = GetDistFromSphere(pos, 0.15);
+
+    float s1 = intersectSDF(dS, dC);
+    float s2 = unionSDF(unionSDF(dCyY, dCyX), dCyZ);
+    float s4 = unionSDF(unionSDF(ssdCyY, ssdCyX), ssdCyZ);
+    float s3 = unionSDF(unionSDF(sdCyY, sdCyX), sdCyZ);
+
+    float s5 = differenceSDF(s1, s2);
+
+    //return differenceSDF(intersectSDF(dS, dC), dCy);
+
+    return unionSDF(unionSDF(s5, differenceSDF(differenceSDF(s3, s4), sdS)), ssdS);
+
+    //return differenceSDF(differenceSDF(s3, s4), sdS);
+    //return unionSDF(unionSDF(dCyY, dCyX), dCyZ);
+
+    //return GetDistFromCylinderZ(pos, float2(0.1, 0.3));
+}
+
+float3 GetNormal(float3 pos)
+{
+    float2 eplison = float2(0.01, 0);
+    float3 normal = SceneSDF(pos) - float3(
+        SceneSDF(pos - eplison.xyy),
+        SceneSDF(pos - eplison.yxy),
+        SceneSDF(pos - eplison.yyx)
+        );
+
+    return normalize(normal);
+}
+
+float Raymarch(float3 ray_origin, float3 ray_direction)
+{
+    float dist_from_origin = 0.0f;
+    float dist_to_surface;
+
+    for (int i = 0; i < MAX_STEPS; i++)
+    {
+        float3 current_pos = ray_origin + dist_from_origin * ray_direction;
+
+        dist_to_surface = SceneSDF(current_pos);
+
+        dist_from_origin += dist_to_surface;
+
+        if (dist_to_surface < MIN_HIT_DIST || dist_from_origin > MAX_TRACE_DIST)
+            break;
+    }
+
+    return dist_from_origin;
+}
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    // TODO: insert actual code here!
+
+    float width, height = 0;
+    Result.GetDimensions(width, height);
+
+    // Calculate uv
+    float2 uv = id.xy / float2(width, height) * 2 - 1;
+
+    float3 ray_origin = mul(CamToWorld, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+
+    float3 ray_direction = mul(CamInverseProjection, float4(uv, 0, 1)).xyz;
+    ray_direction = mul(CamToWorld, float4(ray_direction, 0)).xyz;
+    ray_direction = normalize(ray_direction);
+
+    float distance = Raymarch(ray_origin, ray_direction);
+
+    if (distance < MAX_TRACE_DIST)
+    {
+        float3 normal = GetNormal(ray_origin + ray_direction * distance);
+        Result[id.xy] = float4(normal.x, normal.y, normal.z, 1.0);
+    }
+    else
+        Result[id.xy] = float4(0, 1, 1, 1.0);
+}
