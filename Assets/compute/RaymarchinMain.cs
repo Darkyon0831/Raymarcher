@@ -26,9 +26,7 @@ public class RaymarchinMain : MonoBehaviour
         public uint parentBlendFunc;
         public uint numChilds;
         public uint numShapes;
-        //public ShapeData[] shapes;
-        //public BlendContainerData[] childData;
-        //public uint[] childBlendFuncs;
+        public uint distance;
     }
 
     public ComputeShader raymarchingShader;
@@ -50,6 +48,8 @@ public class RaymarchinMain : MonoBehaviour
         renderTexture = new RenderTexture(1920, 1080, 0);
         renderTexture.enableRandomWrite = true;
         renderTexture.Create();
+
+        MainBlendContainer = GameObject.Find("Main Container").GetComponent<BlendContainer>();
 
         InitComputeBuffers();
     }
@@ -123,6 +123,8 @@ public class RaymarchinMain : MonoBehaviour
                 s.metadata.x = ((Cylinder)cS).h.x;
                 s.metadata.y = ((Cylinder)cS).h.y;
             }
+
+            shapesData[cOffset + i] = s;
         }
 
         cOffset += container.shapes.Length;
@@ -143,6 +145,7 @@ public class RaymarchinMain : MonoBehaviour
         d.parentBlendFunc = (uint)container.blendWithParentFunc;
         d.numChilds = (uint)container.childContainers.Length;
         d.numShapes = (uint)container.shapes.Length;
+        d.distance = 0;
 
         blendContainersData[cOffset] = d;
 

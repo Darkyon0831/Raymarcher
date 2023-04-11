@@ -153,11 +153,11 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   blendFunc: 0
+  blendWithParentFunc: 0
   shapes:
   - {fileID: 1868044716}
   - {fileID: 672694659}
-  childContainer: {fileID: 0}
-  childBlend: 0
+  childContainers: []
 --- !u!4 &534780483
 Transform:
   m_ObjectHideFlags: 0
@@ -215,7 +215,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 672694658}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: -4, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -327,7 +327,7 @@ GameObject:
   - component: {fileID: 717068663}
   - component: {fileID: 717068664}
   m_Layer: 0
-  m_Name: Cube
+  m_Name: Sphere
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -341,7 +341,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 717068662}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: 2, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -357,12 +357,12 @@ MonoBehaviour:
   m_GameObject: {fileID: 717068662}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a800171b4cfa0e94ca3ed96dbdb1b72a, type: 3}
+  m_Script: {fileID: 11500000, guid: a0a00b2036cb8f34d835f4441ac28434, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  shapeType: 1
+  shapeType: 0
   color: {r: 1, g: 1, b: 1, a: 1}
-  size: {x: 1, y: 1, z: 1}
+  radius: 1
 --- !u!1 &963194225
 GameObject:
   m_ObjectHideFlags: 0
@@ -462,6 +462,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   raymarchingShader: {fileID: 7200000, guid: 65ff2b1de7a01cd4ca1ee92d3110d879, type: 3}
   renderTexture: {fileID: 0}
+  MainBlendContainer: {fileID: 0}
 --- !u!1 &1532322953
 GameObject:
   m_ObjectHideFlags: 0
@@ -492,11 +493,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   blendFunc: 0
+  blendWithParentFunc: 0
   shapes:
   - {fileID: 2143887903}
   - {fileID: 717068664}
-  childContainer: {fileID: 534780482}
-  childBlend: 0
+  childContainers:
+  - {fileID: 534780482}
 --- !u!4 &1532322955
 Transform:
   m_ObjectHideFlags: 0
@@ -540,7 +542,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1868044714}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalPosition: {x: -2, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -608,4 +610,4 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   shapeType: 0
   color: {r: 1, g: 1, b: 1, a: 1}
-  radius: 0
+  radius: 1

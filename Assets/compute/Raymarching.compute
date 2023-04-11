@@ -30,6 +30,7 @@ struct BlendContainer
     uint parentBlendFunc;
     uint numChilds;
     uint numShapes;
+    float distance;
 };
 
 StructuredBuffer<Shape> Shapes;
@@ -37,6 +38,8 @@ uint NumShapes;
 
 StructuredBuffer<BlendContainer> BlendContainers;
 uint NumBlendContainers;
+
+float distances[100];
 
 #define MAX_STEPS 100
 #define MIN_HIT_DIST 0.001f
@@ -97,37 +100,14 @@ float GetBlendDistance(uint blendType, float pDistance, float distance)
     return 0;
 }
 
-float GetBlendContainers(int currentIndex)
-{
-    BlendContainer container = BlendContainers[currentIndex];
-    float pDistance = distances[currentIndex];
-    float pCurrentIndex = currentIndex;
-    pCurrentIndex = pCurrentIndex + 1;
-
-
-    for (int i = 0; i < container.numChilds; i++)
-    {
-        pCurrentIndex = pCurrentIndex + 1;
-        pDistance = GetBlendDistance(BlendContainers[currentIndex].parentBlendType, pDistance, distances[currentIndex]);
-        
-        for (int j = 0; j < container[i].numChilds; j++)
-        {
-            pCurrentIndex = pCurrentIndex + 1;
-            float jDistance = GetBlendContainers(BlendContainers[pCurrentIndex], pCurrentIndex);
-            pDistance = GetBlendDistance(BlendContainers[currentIndex].parentBlendType, pDistance, jDistance);
-        }
-    }
-
-    return pDistance;
-}
-
 float SceneSDF(float3 pos)
 {
     float current_distance = 0;
     float shapeOffset = 0;
     float currentBlendParentOffset = 0;
     float currentNumChilds = 0;
-    float distances[NumBlendContainers];
+    uint childArray[25];
+    int currentArraySize = 0;
 
     for (int i = 0; i < NumBlendContainers; i++)
     {
@@ -146,8 +126,8 @@ float SceneSDF(float3 pos)
             else if (shape.shapeType == 2) // cylinder
                 distance = GetDistFromCylinderY(globalPos, shape.metadata.xy);
 
-            if (pDistance > 0)
-                pDistance = GetBlendDistance(BlendContainers[i].blendType, pDistance, distance);
+            if (j > 0)
+                pDistance = GetBlendDistance(BlendContainers[i].blendFunc, pDistance, distance);
             else
                 pDistance = distance;
         }
@@ -156,7 +136,34 @@ float SceneSDF(float3 pos)
         distances[i] = pDistance;
     }
 
-    return current_distance;
+    current_distance = distances[0];
+
+    for (int i = 1; i > -1; i--)
+    {
+        if (BlendContainers[i].numChilds > 0)
+        {
+            for (int j = 0; j < BlendContainers[i].numChilds; j++)
+            {
+                int childIndex = childArray[currentArraySize - 1 - j];
+                float childDistance = distances[childIndex];
+
+                BlendContainer childContainer = BlendContainers[childIndex];
+                float t = GetBlendDistance(childContainer.parentBlendFunc, distances[i], childDistance);
+                currentArraySize--;
+
+                distances[i] = t;
+            }
+        }
+        else
+        {
+            childArray[currentArraySize] = i;
+            currentArraySize++;
+        }
+    }
+
+    //distances[0] = GetBlendDistance(0, distances[0], distances[1]);
+
+    return distances[0];
 }
 
 float3 GetNormal(float3 pos)
