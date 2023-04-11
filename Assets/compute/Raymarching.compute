@@ -6,8 +6,37 @@
 RWTexture2D<float4> Result;
 float4x4 CamToWorld;
 float4x4 CamInverseProjection;
-float4x4 ObjectRotateInverseMatrix;
-float3 ObjectPos;
+
+//enum ShapeType
+//{
+//    Circle = 0,
+//    Cube = 1,
+//    Cylinder = 2
+//};
+
+struct Shape
+{
+    uint shapeType;
+    float3 pos;
+    float3 rot;
+    float3 scale;
+    float4 color;
+    float3 metadata;
+};
+
+struct BlendContainer
+{
+    uint blendFunc;
+    uint parentBlendFunc;
+    uint numChilds;
+    uint numShapes;
+};
+
+StructuredBuffer<Shape> Shapes;
+uint NumShapes;
+
+StructuredBuffer<BlendContainer> BlendContainers;
+uint NumBlendContainers;
 
 #define MAX_STEPS 100
 #define MIN_HIT_DIST 0.001f
@@ -56,45 +85,78 @@ float differenceSDF(float distA, float distB) {
     return max(distA, -distB);
 }
 
+float GetBlendDistance(uint blendType, float pDistance, float distance)
+{
+    if (blendType == 0) // union
+        return unionSDF(pDistance, distance);
+    else if (blendType == 1) // intersection
+        return intersectSDF(pDistance, distance);
+    else if (blendType == 2) // difference
+        return differenceSDF(pDistance, distance);
+
+    return 0;
+}
+
+float GetBlendContainers(int currentIndex)
+{
+    BlendContainer container = BlendContainers[currentIndex];
+    float pDistance = distances[currentIndex];
+    float pCurrentIndex = currentIndex;
+    pCurrentIndex = pCurrentIndex + 1;
+
+
+    for (int i = 0; i < container.numChilds; i++)
+    {
+        pCurrentIndex = pCurrentIndex + 1;
+        pDistance = GetBlendDistance(BlendContainers[currentIndex].parentBlendType, pDistance, distances[currentIndex]);
+        
+        for (int j = 0; j < container[i].numChilds; j++)
+        {
+            pCurrentIndex = pCurrentIndex + 1;
+            float jDistance = GetBlendContainers(BlendContainers[pCurrentIndex], pCurrentIndex);
+            pDistance = GetBlendDistance(BlendContainers[currentIndex].parentBlendType, pDistance, jDistance);
+        }
+    }
+
+    return pDistance;
+}
+
 float SceneSDF(float3 pos)
 {
-    pos = pos - ObjectPos;
-    pos = mul(ObjectRotateInverseMatrix, float4(pos, 1.0)).xyz;
+    float current_distance = 0;
+    float shapeOffset = 0;
+    float currentBlendParentOffset = 0;
+    float currentNumChilds = 0;
+    float distances[NumBlendContainers];
 
-    float dC = GetDistFromCube(pos, float3(0.4, 0.4, 0.4));
-    float dS = GetDistFromSphere(pos, 0.5);
-    float dCyX = GetDistFromCylinderX(pos, float2(0.3, 0.5));
-    float dCyY = GetDistFromCylinderY(pos, float2(0.3, 0.5));
-    float dCyZ = GetDistFromCylinderZ(pos, float2(0.3, 0.5));
+    for (int i = 0; i < NumBlendContainers; i++)
+    {
+        float pDistance = 0;
 
-    float sdCyX = GetDistFromCylinderX(pos, float2(0.1, 0.4));
-    float sdCyY = GetDistFromCylinderY(pos, float2(0.1, 0.4));
-    float sdCyZ = GetDistFromCylinderZ(pos, float2(0.1, 0.4));
+        for (int j = 0; j < BlendContainers[i].numShapes; j++)
+        {
+            Shape shape = Shapes[shapeOffset + j];
+            float distance = 0;
+            float3 globalPos = pos - shape.pos;
 
-    float ssdCyX = GetDistFromCylinderX(pos, float2(0.08, 0.5));
-    float ssdCyY = GetDistFromCylinderY(pos, float2(0.08, 0.5));
-    float ssdCyZ = GetDistFromCylinderZ(pos, float2(0.08, 0.5));
+            if (shape.shapeType == 0) // circle
+                distance = GetDistFromSphere(globalPos, shape.metadata.x);
+            else if (shape.shapeType == 1) // cube
+                distance = GetDistFromCube(globalPos, shape.metadata.xyz);
+            else if (shape.shapeType == 2) // cylinder
+                distance = GetDistFromCylinderY(globalPos, shape.metadata.xy);
 
-    float sdS = GetDistFromSphere(pos, 0.2);
-    float ssdS = GetDistFromSphere(pos, 0.1);
+            if (pDistance > 0)
+                pDistance = GetBlendDistance(BlendContainers[i].blendType, pDistance, distance);
+            else
+                pDistance = distance;
+        }
 
-    //float sDs = GetDistFromSphere(pos, 0.15);
+        shapeOffset += BlendContainers[i].numShapes;
+        distances[i] = pDistance;
+    }
 
-    float s1 = intersectSDF(dS, dC);
-    float s2 = unionSDF(unionSDF(dCyY, dCyX), dCyZ);
-    float s4 = unionSDF(unionSDF(ssdCyY, ssdCyX), ssdCyZ);
-    float s3 = unionSDF(unionSDF(sdCyY, sdCyX), sdCyZ);
-
-    float s5 = differenceSDF(s1, s2);
-
-    //return differenceSDF(intersectSDF(dS, dC), dCy);
-
-    return unionSDF(unionSDF(s5, differenceSDF(differenceSDF(s3, s4), sdS)), ssdS);
-
-    //return differenceSDF(differenceSDF(s3, s4), sdS);
-    //return unionSDF(unionSDF(dCyY, dCyX), dCyZ);
-
-    //return GetDistFromCylinderZ(pos, float2(0.1, 0.3));
+    return current_distance;
 }
 
 float3 GetNormal(float3 pos)

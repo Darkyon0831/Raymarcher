@@ -2,19 +2,15 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+public enum ShapeType
+{
+    Circle,
+    Cube,
+    Cylinder
+}
+
 public class Shape : MonoBehaviour
 {
-
-
-    // Start is called before the first frame update
-    void Start()
-    {
-        
-    }
-
-    // Update is called once per frame
-    void Update()
-    {
-        
-    }
+    public ShapeType shapeType = ShapeType.Circle;
+    public Color color = Color.white;
 }
