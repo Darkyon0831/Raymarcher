@@ -18,6 +18,7 @@ public class RaymarchinMain : MonoBehaviour
         public Vector3 scale;
         public Vector4 color;
         public Vector3 metadata;
+        public uint parentIndex;
     }
 
     struct BlendContainerData
@@ -26,7 +27,7 @@ public class RaymarchinMain : MonoBehaviour
         public uint parentBlendFunc;
         public uint numChilds;
         public uint numShapes;
-        public uint distance;
+        public uint parentIndex;
     }
 
     public ComputeShader raymarchingShader;
@@ -39,6 +40,8 @@ public class RaymarchinMain : MonoBehaviour
     private List<BlendContainerData> blendContainersData = new List<BlendContainerData>();
     private Camera cam;
     private Vector4 camPos = Vector4.zero;
+
+    private int tempParentIndex = 0;
 
     // Start is called before the first frame update
     void Start()
@@ -67,7 +70,7 @@ public class RaymarchinMain : MonoBehaviour
         raymarchingShader.SetMatrix("CamToWorld", cam.cameraToWorldMatrix);
         raymarchingShader.SetMatrix("CamInverseProjection", cam.projectionMatrix.inverse);
 
-        raymarchingShader.Dispatch(0, renderTexture.width / 8, renderTexture.height / 8, 1);
+        raymarchingShader.Dispatch(0, renderTexture.width / 6, renderTexture.height / 6, 1);
 
         Graphics.Blit(renderTexture, destination);
     }
@@ -95,20 +98,23 @@ public class RaymarchinMain : MonoBehaviour
         }
     }
 
-    void UpdateShapes(BlendContainer container, int offset = 0)
+    int UpdateShapes(BlendContainer container, int offset = 0)
     {
         int cOffset = offset;
 
         for (int i = 0; i < container.shapes.Length; i++)
         {
+            int index = container.shapes.Length - 1 - i;
+
             ShapeData s = shapesData[cOffset + i];
-            Shape cS = container.shapes[i];
+            Shape cS = container.shapes[index];
 
             s.shapeType = (uint)cS.shapeType;
             s.pos = cS.transform.position;
             s.rot = cS.transform.rotation.eulerAngles;
             s.scale = cS.transform.localScale;
             s.color = cS.color;
+            s.parentIndex = (uint)container.NOTUSEIndex;
 
             if (cS.shapeType == ShapeType.Circle)
                 s.metadata.x = ((Circle)cS).radius;
@@ -128,14 +134,17 @@ public class RaymarchinMain : MonoBehaviour
         }
 
         cOffset += container.shapes.Length;
+        tempParentIndex++;
 
         for (int i = 0; i < container.childContainers.Length; i++)
         {
-            UpdateShapes(container.childContainers[i], cOffset);
+            cOffset = UpdateShapes(container.childContainers[i], cOffset);
         }
+
+        return cOffset;
     }
 
-    void UpdateBlendContainers(BlendContainer container, int offset = 0)
+    int UpdateBlendContainers(BlendContainer container, int offset = 0, int parentIndex = 0)
     {
         int cOffset = offset;
 
@@ -145,16 +154,22 @@ public class RaymarchinMain : MonoBehaviour
         d.parentBlendFunc = (uint)container.blendWithParentFunc;
         d.numChilds = (uint)container.childContainers.Length;
         d.numShapes = (uint)container.shapes.Length;
-        d.distance = 0;
+        d.parentIndex = (uint)parentIndex;
+        container.NOTUSEIndex = cOffset;
 
         blendContainersData[cOffset] = d;
 
-        cOffset += 1;
+        int cParentIndex = cOffset;
+        cOffset++;
 
         for (int i = 0; i < container.childContainers.Length; i++)
         {
-            UpdateBlendContainers(container.childContainers[i], cOffset);
+            int index = container.childContainers.Length - 1 - i;
+
+            cOffset = UpdateBlendContainers(container.childContainers[index], cOffset, cParentIndex);
         }
+
+        return cOffset;
     }
 
     void InitComputeBuffers()
@@ -168,6 +183,7 @@ public class RaymarchinMain : MonoBehaviour
 
     void UpdateComputeBuffer()
     {
+        tempParentIndex = 0;
         UpdateBlendContainers(MainBlendContainer);
         UpdateShapes(MainBlendContainer);
 

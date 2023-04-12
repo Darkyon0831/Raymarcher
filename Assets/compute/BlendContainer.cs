@@ -15,4 +15,5 @@ public class BlendContainer : MonoBehaviour
     public BlendFunc blendWithParentFunc = BlendFunc.Union;
     public Shape[] shapes;
     public BlendContainer[] childContainers;
+    [HideInInspector] public int NOTUSEIndex;
 }

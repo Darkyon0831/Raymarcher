@@ -22,6 +22,7 @@ struct Shape
     float3 scale;
     float4 color;
     float3 metadata;
+    uint parentIndex;
 };
 
 struct BlendContainer
@@ -30,7 +31,7 @@ struct BlendContainer
     uint parentBlendFunc;
     uint numChilds;
     uint numShapes;
-    float distance;
+    uint parentIndex;
 };
 
 StructuredBuffer<Shape> Shapes;
@@ -38,8 +39,6 @@ uint NumShapes;
 
 StructuredBuffer<BlendContainer> BlendContainers;
 uint NumBlendContainers;
-
-float distances[100];
 
 #define MAX_STEPS 100
 #define MIN_HIT_DIST 0.001f
@@ -102,66 +101,53 @@ float GetBlendDistance(uint blendType, float pDistance, float distance)
 
 float SceneSDF(float3 pos)
 {
-    float current_distance = 0;
-    float shapeOffset = 0;
-    float currentBlendParentOffset = 0;
-    float currentNumChilds = 0;
-    uint childArray[25];
-    int currentArraySize = 0;
+    float distances[25];
+    uint firstBlend[25];
+    float distance = 0;
 
-    for (int i = 0; i < NumBlendContainers; i++)
+    [unroll(25)] for (int j = 0; j < 25; j++)
     {
-        float pDistance = 0;
-
-        for (int j = 0; j < BlendContainers[i].numShapes; j++)
-        {
-            Shape shape = Shapes[shapeOffset + j];
-            float distance = 0;
-            float3 globalPos = pos - shape.pos;
-
-            if (shape.shapeType == 0) // circle
-                distance = GetDistFromSphere(globalPos, shape.metadata.x);
-            else if (shape.shapeType == 1) // cube
-                distance = GetDistFromCube(globalPos, shape.metadata.xyz);
-            else if (shape.shapeType == 2) // cylinder
-                distance = GetDistFromCylinderY(globalPos, shape.metadata.xy);
-
-            if (j > 0)
-                pDistance = GetBlendDistance(BlendContainers[i].blendFunc, pDistance, distance);
-            else
-                pDistance = distance;
-        }
-
-        shapeOffset += BlendContainers[i].numShapes;
-        distances[i] = pDistance;
+        firstBlend[j] = 0;
     }
 
-    current_distance = distances[0];
-
-    for (int i = 1; i > -1; i--)
+    for (uint i = 0; i < NumShapes; i++)
     {
-        if (BlendContainers[i].numChilds > 0)
+        int pIndex = NumShapes - 1 - i;
+        Shape shape = Shapes[pIndex];
+
+        float3 globalPos = pos - shape.pos;
+
+        if (shape.shapeType == 0) // Circle
+            distance = GetDistFromSphere(globalPos, shape.metadata.x);
+        else if (shape.shapeType == 1) // Square
+            distance = GetDistFromCube(globalPos, shape.metadata.xyz);
+        else if (shape.shapeType == 2) // Cylinder
+            distance = GetDistFromCylinderY(globalPos, shape.metadata.xy);
+
+        uint blendFunc = BlendContainers[shape.parentIndex].blendFunc;
+
+        if (firstBlend[shape.parentIndex] != 0)
         {
-            for (int j = 0; j < BlendContainers[i].numChilds; j++)
-            {
-                int childIndex = childArray[currentArraySize - 1 - j];
-                float childDistance = distances[childIndex];
-
-                BlendContainer childContainer = BlendContainers[childIndex];
-                float t = GetBlendDistance(childContainer.parentBlendFunc, distances[i], childDistance);
-                currentArraySize--;
-
-                distances[i] = t;
-            }
+            distances[shape.parentIndex] = GetBlendDistance(blendFunc, distances[shape.parentIndex], distance);
         }
         else
         {
-            childArray[currentArraySize] = i;
-            currentArraySize++;
+            distances[shape.parentIndex] = distance;
+            firstBlend[shape.parentIndex] = 1;
         }
     }
 
-    //distances[0] = GetBlendDistance(0, distances[0], distances[1]);
+    for (int k = 0; k < NumBlendContainers; k++)
+    {
+        int pIndex = NumBlendContainers - 1 - k;
+        BlendContainer blendContainer = BlendContainers[pIndex];
+
+        uint parentBlendFunc = BlendContainers[pIndex].parentBlendFunc;
+        float parentDistance = distances[blendContainer.parentIndex];
+        float distance = distances[pIndex];
+
+        distances[blendContainer.parentIndex] = GetBlendDistance(parentBlendFunc, parentDistance, distance);
+    }
 
     return distances[0];
 }
@@ -198,7 +184,7 @@ float Raymarch(float3 ray_origin, float3 ray_direction)
     return dist_from_origin;
 }
 
-[numthreads(8,8,1)]
+[numthreads(6,6,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
     // TODO: insert actual code here!
