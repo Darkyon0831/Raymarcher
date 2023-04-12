@@ -9,8 +9,9 @@ public enum ShapeType
     Cylinder
 }
 
-public class Shape : MonoBehaviour
+public abstract class Shape : MonoBehaviour
 {
-    public ShapeType shapeType = ShapeType.Circle;
     public Color color = Color.white;
+
+    public abstract ShapeType GetShapeType();
 }

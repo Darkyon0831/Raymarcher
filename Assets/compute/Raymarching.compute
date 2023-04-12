@@ -35,6 +35,8 @@ struct BlendContainer
     uint parentIndex;
     uint isSmoothBlend;
     float smoothFactor;
+    uint isParentSmoothBlend;
+    float parentSmoothFactor;
 };
 
 StructuredBuffer<Shape> Shapes;
@@ -88,9 +90,16 @@ float4 IntersectSDF(float4 distA, float4 distB)
 
 float4 UnionSmoothSDF(float4 distA, float4 distB, float smoothFactor)
 {
+    float3 color;
+    if (min(distA.w, distB.w) == distA.w)
+        color = distA.xyz;
+    else
+        color = distB.xyz;
+
+    float colorH = clamp(0.5 + 0.5 * (distB.w - distA.w) / (smoothFactor / 2), 0.0, 1.0);
     float h = clamp(0.5 + 0.5 * (distB.w - distA.w) / smoothFactor, 0.0, 1.0);
     float blendDst = lerp(distB.w, distA.w, h) - smoothFactor * h * (1.0 - h);
-    float3 blendCol = lerp(distB.xyz, distA.xyz, h);
+    float3 blendCol = lerp(distB.xyz, distA.xyz, colorH);
     return float4(blendCol, blendDst);
 }
 
@@ -188,8 +197,8 @@ float4 SceneSDF(float3 pos)
 
         datas[blendContainer.parentIndex] = GetBlendDistance(
             parentBlendFunc, 
-            blendContainer.isSmoothBlend,
-            blendContainer.smoothFactor,
+            blendContainer.isParentSmoothBlend,
+            blendContainer.parentSmoothFactor,
             parentData, 
             data);
     }

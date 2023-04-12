@@ -5,4 +5,9 @@ using UnityEngine;
 public class Cube : Shape
 {
     public Vector3 size = Vector2.zero;
+
+    public override ShapeType GetShapeType()
+    {
+        return ShapeType.Cube;
+    }
 }

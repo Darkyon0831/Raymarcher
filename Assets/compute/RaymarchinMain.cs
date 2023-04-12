@@ -31,6 +31,8 @@ public class RaymarchinMain : MonoBehaviour
         public uint parentIndex;
         public uint isSmoothBlend;
         public float smoothFactor;
+        public uint isParentSmoothBlend;
+        public float parentSmoothFactor;
     }
 
     public ComputeShader raymarchingShader;
@@ -152,30 +154,37 @@ public class RaymarchinMain : MonoBehaviour
 
                 ShapeData s = shapesData[cOffset + i];
                 Shape cS = container.shapes[index];
-                tempCurrentShapes++;
 
-                s.shapeType = (uint)cS.shapeType;
-                s.pos = cS.transform.position;
-                s.inverseRotMatrix = GetRotMatrix(cS.transform.rotation).inverse;
-                s.inverseScaleMatrix = GetScaleMatrix(cS.transform.localScale).inverse;
-                s.color = cS.color;
-                s.parentIndex = (uint)container.NOTUSEIndex;
-
-                if (cS.shapeType == ShapeType.Circle)
-                    s.metadata.x = ((Circle)cS).radius;
-                else if (cS.shapeType == ShapeType.Cube)
+                if (cS.enabled)
                 {
-                    s.metadata.x = ((Cube)cS).size.x;
-                    s.metadata.y = ((Cube)cS).size.y;
-                    s.metadata.z = ((Cube)cS).size.z;
-                }
-                else if (cS.shapeType == ShapeType.Cylinder)
-                {
-                    s.metadata.x = ((Cylinder)cS).h.x;
-                    s.metadata.y = ((Cylinder)cS).h.y;
-                }
+                    tempCurrentShapes++;
 
-                shapesData[cOffset + i] = s;
+                    ShapeType type = cS.GetShapeType();
+                    s.shapeType = (uint)type;
+                    s.pos = cS.transform.position;
+                    s.inverseRotMatrix = GetRotMatrix(cS.transform.rotation).inverse;
+                    s.inverseScaleMatrix = GetScaleMatrix(cS.transform.localScale).inverse;
+                    s.color = cS.color;
+                    s.parentIndex = (uint)container.NOTUSEIndex;
+
+                    if (type == ShapeType.Circle)
+                        s.metadata.x = ((Circle)cS).radius;
+                    else if (type == ShapeType.Cube)
+                    {
+                        s.metadata.x = ((Cube)cS).size.x;
+                        s.metadata.y = ((Cube)cS).size.y;
+                        s.metadata.z = ((Cube)cS).size.z;
+                    }
+                    else if (type == ShapeType.Cylinder)
+                    {
+                        s.metadata.x = ((Cylinder)cS).h.x;
+                        s.metadata.y = ((Cylinder)cS).h.y;
+                    }
+
+                    shapesData[cOffset + i] = s;
+                }
+                else
+                    cOffset--;
             }
         }
 
@@ -194,26 +203,28 @@ public class RaymarchinMain : MonoBehaviour
     {
         int cOffset = offset;
 
-        BlendContainerData d = blendContainersData[cOffset];
-
-        d.blendFunc = (uint)container.blendFunc;
-        d.parentBlendFunc = (uint)container.blendWithParentFunc;
-        d.numChilds = (uint)container.childContainers.Length;
-        d.numShapes = (uint)container.shapes.Length;
-        d.parentIndex = (uint)parentIndex;
-        d.isSmoothBlend = (uint)(container.isSmoothBlend ? 1 : 0);
-        d.smoothFactor = container.smoothFactor;
-        container.NOTUSEIndex = cOffset;
-
-        blendContainersData[cOffset] = d;
-
-        int cParentIndex = cOffset;
-        cOffset++;
-        tempCurrentBlends++;
-
-        for (int i = 0; i < container.childContainers.Length; i++)
+        if (container.enabled)
         {
-            if (container.childContainers[i] != null)
+            BlendContainerData d = blendContainersData[cOffset];
+
+            d.blendFunc = (uint)container.blendFunc;
+            d.parentBlendFunc = (uint)container.blendWithParentFunc;
+            d.numChilds = (uint)container.childContainers.Length;
+            d.numShapes = (uint)container.shapes.Length;
+            d.parentIndex = (uint)parentIndex;
+            d.isSmoothBlend = (uint)(container.isSmoothBlend ? 1 : 0);
+            d.smoothFactor = container.smoothFactor;
+            d.isParentSmoothBlend = (uint)(container.isParentSmoothBlend ? 1 : 0);
+            d.parentSmoothFactor = container.parentSmoothFactor;
+            container.NOTUSEIndex = cOffset;
+
+            blendContainersData[cOffset] = d;
+
+            int cParentIndex = cOffset;
+            cOffset++;
+            tempCurrentBlends++;
+
+            for (int i = 0; i < container.childContainers.Length; i++)
             {
                 int index = container.childContainers.Length - 1 - i;
 
