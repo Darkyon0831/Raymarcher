@@ -8,14 +8,15 @@ using UnityEngine;
 using UnityEngine.Pool;
 using static UnityEditor.VersionControl.Asset;
 
+[ExecuteInEditMode, ImageEffectAllowedInSceneView]
 public class RaymarchinMain : MonoBehaviour
 {
     struct ShapeData
     {
         public uint shapeType;
         public Vector3 pos;
-        public Vector3 rot;
-        public Vector3 scale;
+        public Matrix4x4 inverseRotMatrix;
+        public Matrix4x4 inverseScaleMatrix;
         public Vector4 color;
         public Vector3 metadata;
         public uint parentIndex;
@@ -28,6 +29,8 @@ public class RaymarchinMain : MonoBehaviour
         public uint numChilds;
         public uint numShapes;
         public uint parentIndex;
+        public uint isSmoothBlend;
+        public float smoothFactor;
     }
 
     public ComputeShader raymarchingShader;
@@ -41,32 +44,48 @@ public class RaymarchinMain : MonoBehaviour
     private Camera cam;
     private Vector4 camPos = Vector4.zero;
 
-    private int tempParentIndex = 0;
+    private int tempCurrentBlends;
+    private int tempCurrentShapes;
+
+    private const int MAX_BLEND_CONTAINERS = 25;
+    private const int START_SHAPE_COUNT = 50;
 
     // Start is called before the first frame update
     void Start()
     {
         cam = GetComponent<Camera>();
 
-        renderTexture = new RenderTexture(1920, 1080, 0);
+        renderTexture = new RenderTexture(cam.pixelWidth, cam.pixelHeight, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
         renderTexture.enableRandomWrite = true;
         renderTexture.Create();
 
-        MainBlendContainer = GameObject.Find("Main Container").GetComponent<BlendContainer>();
-
         InitComputeBuffers();
+    }
+
+    void OnResize(RenderTexture source)
+    {
+        if (renderTexture != null && renderTexture.width != source.width && renderTexture.height != source.height)
+        {
+            renderTexture.Release();
+            renderTexture = new RenderTexture(cam.pixelWidth, cam.pixelHeight, 0, RenderTextureFormat.ARGBFloat, RenderTextureReadWrite.Linear);
+            renderTexture.enableRandomWrite = true;
+            renderTexture.Create();
+        }
     }
 
     void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
         camPos.Set(cam.transform.position.x, cam.transform.position.y, cam.transform.position.z, 1.0f);
 
+        OnResize(source);
+
         UpdateComputeBuffer();
         raymarchingShader.SetBuffer(0, "Shapes", shapesComputeBuffer);
-        raymarchingShader.SetInt("NumShapes", shapesData.Count);
+        raymarchingShader.SetInt("NumShapes", tempCurrentShapes);
         raymarchingShader.SetBuffer(0, "BlendContainers", blendContainersComputeBuffer);
-        raymarchingShader.SetInt("NumBlendContainers", blendContainersData.Count);
+        raymarchingShader.SetInt("NumBlendContainers", tempCurrentBlends);
         raymarchingShader.SetTexture(0, "Result", renderTexture);
+        raymarchingShader.SetTexture(0, "Source", source);
         raymarchingShader.SetMatrix("CamToWorld", cam.cameraToWorldMatrix);
         raymarchingShader.SetMatrix("CamInverseProjection", cam.projectionMatrix.inverse);
 
@@ -75,27 +94,47 @@ public class RaymarchinMain : MonoBehaviour
         Graphics.Blit(renderTexture, destination);
     }
 
-    void InitShapesList(BlendContainer container)
+    private void OnDestroy()
     {
-        for (int i = 0; i < container.shapes.Length; i++)
+        shapesComputeBuffer.Release();
+        blendContainersComputeBuffer.Release();
+    }
+
+    Matrix4x4 GetRotMatrix(Quaternion q)
+    {
+        return Matrix4x4.Rotate(q);
+    }
+
+    Matrix4x4 GetScaleMatrix(Vector3 localScale)
+    {
+        return Matrix4x4.Scale(localScale);
+    }
+
+    void InitShapesList()
+    {
+        for (int i = 0; i < START_SHAPE_COUNT; i++)
+        {
+            shapesData.Add(new ShapeData());
+        }
+    }
+
+    void InitBlendContainersList()
+    {
+        for (int i = 0; i < MAX_BLEND_CONTAINERS; i++)
+        {
+            blendContainersData.Add(new BlendContainerData());
+        }
+    }
+
+    void ResizeShapes()
+    {
+        for (int i = 0; i < shapesData.Count; i++)
         {
             shapesData.Add(new ShapeData());
         }
 
-        for (int i = 0; i < container.childContainers.Length; i++)
-        {
-            InitShapesList(container.childContainers[i]);
-        }
-    }
-
-    void InitBlendContainersList(BlendContainer container)
-    {
-        blendContainersData.Add(new BlendContainerData());
-
-        for (int i = 0; i < container.childContainers.Length; i++)
-        {
-            InitBlendContainersList(container.childContainers[i]);
-        }
+        shapesComputeBuffer.Release();
+        shapesComputeBuffer = new ComputeBuffer(shapesData.Count, Marshal.SizeOf<ShapeData>());
     }
 
     int UpdateShapes(BlendContainer container, int offset = 0)
@@ -104,41 +143,48 @@ public class RaymarchinMain : MonoBehaviour
 
         for (int i = 0; i < container.shapes.Length; i++)
         {
-            int index = container.shapes.Length - 1 - i;
-
-            ShapeData s = shapesData[cOffset + i];
-            Shape cS = container.shapes[index];
-
-            s.shapeType = (uint)cS.shapeType;
-            s.pos = cS.transform.position;
-            s.rot = cS.transform.rotation.eulerAngles;
-            s.scale = cS.transform.localScale;
-            s.color = cS.color;
-            s.parentIndex = (uint)container.NOTUSEIndex;
-
-            if (cS.shapeType == ShapeType.Circle)
-                s.metadata.x = ((Circle)cS).radius;
-            else if (cS.shapeType == ShapeType.Cube)
+            if (container.shapes[i] != null)
             {
-                s.metadata.x = ((Cube)cS).size.x;
-                s.metadata.y = ((Cube)cS).size.y;
-                s.metadata.z = ((Cube)cS).size.z;
-            }
-            else if (cS.shapeType == ShapeType.Cylinder)
-            {
-                s.metadata.x = ((Cylinder)cS).h.x;
-                s.metadata.y = ((Cylinder)cS).h.y;
-            }
+                int index = container.shapes.Length - 1 - i;
 
-            shapesData[cOffset + i] = s;
+                if (cOffset + i > shapesData.Count)
+                    ResizeShapes();
+
+                ShapeData s = shapesData[cOffset + i];
+                Shape cS = container.shapes[index];
+                tempCurrentShapes++;
+
+                s.shapeType = (uint)cS.shapeType;
+                s.pos = cS.transform.position;
+                s.inverseRotMatrix = GetRotMatrix(cS.transform.rotation).inverse;
+                s.inverseScaleMatrix = GetScaleMatrix(cS.transform.localScale).inverse;
+                s.color = cS.color;
+                s.parentIndex = (uint)container.NOTUSEIndex;
+
+                if (cS.shapeType == ShapeType.Circle)
+                    s.metadata.x = ((Circle)cS).radius;
+                else if (cS.shapeType == ShapeType.Cube)
+                {
+                    s.metadata.x = ((Cube)cS).size.x;
+                    s.metadata.y = ((Cube)cS).size.y;
+                    s.metadata.z = ((Cube)cS).size.z;
+                }
+                else if (cS.shapeType == ShapeType.Cylinder)
+                {
+                    s.metadata.x = ((Cylinder)cS).h.x;
+                    s.metadata.y = ((Cylinder)cS).h.y;
+                }
+
+                shapesData[cOffset + i] = s;
+            }
         }
 
         cOffset += container.shapes.Length;
-        tempParentIndex++;
 
         for (int i = 0; i < container.childContainers.Length; i++)
         {
-            cOffset = UpdateShapes(container.childContainers[i], cOffset);
+            if (container.childContainers[i] != null)
+                cOffset = UpdateShapes(container.childContainers[i], cOffset);
         }
 
         return cOffset;
@@ -155,18 +201,24 @@ public class RaymarchinMain : MonoBehaviour
         d.numChilds = (uint)container.childContainers.Length;
         d.numShapes = (uint)container.shapes.Length;
         d.parentIndex = (uint)parentIndex;
+        d.isSmoothBlend = (uint)(container.isSmoothBlend ? 1 : 0);
+        d.smoothFactor = container.smoothFactor;
         container.NOTUSEIndex = cOffset;
 
         blendContainersData[cOffset] = d;
 
         int cParentIndex = cOffset;
         cOffset++;
+        tempCurrentBlends++;
 
         for (int i = 0; i < container.childContainers.Length; i++)
         {
-            int index = container.childContainers.Length - 1 - i;
+            if (container.childContainers[i] != null)
+            {
+                int index = container.childContainers.Length - 1 - i;
 
-            cOffset = UpdateBlendContainers(container.childContainers[index], cOffset, cParentIndex);
+                cOffset = UpdateBlendContainers(container.childContainers[index], cOffset, cParentIndex);
+            }
         }
 
         return cOffset;
@@ -174,16 +226,17 @@ public class RaymarchinMain : MonoBehaviour
 
     void InitComputeBuffers()
     {
-        InitBlendContainersList(MainBlendContainer);
-        InitShapesList(MainBlendContainer);
+        InitBlendContainersList();
+        InitShapesList();
 
-        blendContainersComputeBuffer = new ComputeBuffer(blendContainersData.Count, Marshal.SizeOf<BlendContainerData>());
-        shapesComputeBuffer = new ComputeBuffer(shapesData.Count, Marshal.SizeOf<ShapeData>());
+        blendContainersComputeBuffer = new ComputeBuffer(MAX_BLEND_CONTAINERS, Marshal.SizeOf<BlendContainerData>());
+        shapesComputeBuffer = new ComputeBuffer(START_SHAPE_COUNT, Marshal.SizeOf<ShapeData>());
     }
 
     void UpdateComputeBuffer()
     {
-        tempParentIndex = 0;
+        tempCurrentBlends = 0;
+        tempCurrentShapes = 0;
         UpdateBlendContainers(MainBlendContainer);
         UpdateShapes(MainBlendContainer);
 

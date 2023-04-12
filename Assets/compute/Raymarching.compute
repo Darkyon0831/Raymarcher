@@ -3,6 +3,7 @@
 
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
+Texture2D<float4> Source;
 RWTexture2D<float4> Result;
 float4x4 CamToWorld;
 float4x4 CamInverseProjection;
@@ -18,8 +19,8 @@ struct Shape
 {
     uint shapeType;
     float3 pos;
-    float3 rot;
-    float3 scale;
+    float4x4 inverseRotMatrix;
+    float4x4 inverseScaleMatrix;
     float4 color;
     float3 metadata;
     uint parentIndex;
@@ -32,6 +33,8 @@ struct BlendContainer
     uint numChilds;
     uint numShapes;
     uint parentIndex;
+    uint isSmoothBlend;
+    float smoothFactor;
 };
 
 StructuredBuffer<Shape> Shapes;
@@ -75,35 +78,61 @@ float GetDistFromCylinderZ(float3 pos, float2 h)
     return length(max(d, 0)) + max(min(d.x, 0), min(d.y, 0));
 }
 
-float intersectSDF(float distA, float distB) {
-    return max(distA, distB);
+float4 IntersectSDF(float4 distA, float4 distB)
+{
+    if (max(distA.w, distB.w) == distA.w)
+        return distA;
+    else
+        return distB;
 }
 
-float unionSDF(float distA, float distB) {
-    return min(distA, distB);
+float4 UnionSmoothSDF(float4 distA, float4 distB, float smoothFactor)
+{
+    float h = clamp(0.5 + 0.5 * (distB.w - distA.w) / smoothFactor, 0.0, 1.0);
+    float blendDst = lerp(distB.w, distA.w, h) - smoothFactor * h * (1.0 - h);
+    float3 blendCol = lerp(distB.xyz, distA.xyz, h);
+    return float4(blendCol, blendDst);
 }
 
-float differenceSDF(float distA, float distB) {
-    return max(distA, -distB);
+float4 UnionSDF(float4 distA, float4 distB) 
+{
+    if (min(distA.w, distB.w) == distA.w)
+        return distA;
+    else
+        return distB;
 }
 
-float GetBlendDistance(uint blendType, float pDistance, float distance)
+float4 DifferenceSDF(float4 distA, float4 distB) 
+{
+    if (max(distA.w, -distB.w) == distA.w)
+        return distA;
+    else
+        return float4(distB.x, distB.y, distB.z, -distB.w);
+}
+
+float4 GetBlendDistance(uint blendType, uint isSmoothBlend, float smoothFactor, float4 pDistance, float4 distance)
 {
     if (blendType == 0) // union
-        return unionSDF(pDistance, distance);
+    {
+        if (isSmoothBlend == 0)
+            return UnionSDF(pDistance, distance);
+        else
+            return UnionSmoothSDF(pDistance, distance, smoothFactor);
+    }
     else if (blendType == 1) // intersection
-        return intersectSDF(pDistance, distance);
+        return IntersectSDF(pDistance, distance);
     else if (blendType == 2) // difference
-        return differenceSDF(pDistance, distance);
+        return DifferenceSDF(pDistance, distance);
 
     return 0;
 }
 
-float SceneSDF(float3 pos)
+float4 SceneSDF(float3 pos)
 {
-    float distances[25];
+    float4 datas[25];
     uint firstBlend[25];
     float distance = 0;
+
 
     [unroll(25)] for (int j = 0; j < 25; j++)
     {
@@ -116,6 +145,8 @@ float SceneSDF(float3 pos)
         Shape shape = Shapes[pIndex];
 
         float3 globalPos = pos - shape.pos;
+        globalPos = mul(shape.inverseRotMatrix, float4(globalPos, 1)).xyz;
+        globalPos = mul(shape.inverseScaleMatrix, float4(globalPos, 1)).xyz;
 
         if (shape.shapeType == 0) // Circle
             distance = GetDistFromSphere(globalPos, shape.metadata.x);
@@ -128,63 +159,77 @@ float SceneSDF(float3 pos)
 
         if (firstBlend[shape.parentIndex] != 0)
         {
-            distances[shape.parentIndex] = GetBlendDistance(blendFunc, distances[shape.parentIndex], distance);
+            datas[shape.parentIndex] = GetBlendDistance(
+                blendFunc, 
+                BlendContainers[shape.parentIndex].isSmoothBlend,
+                BlendContainers[shape.parentIndex].smoothFactor,
+                datas[shape.parentIndex], 
+                float4(shape.color.rgb, distance));
         }
         else
         {
-            distances[shape.parentIndex] = distance;
+            datas[shape.parentIndex] = float4(shape.color.rgb, distance);
             firstBlend[shape.parentIndex] = 1;
         }
     }
 
-    for (int k = 0; k < NumBlendContainers; k++)
+    float4 parentData;
+    float4 data;
+
+    // Dont need to blend main container that will always be first element of BlendContainers array
+    for (uint k = 0; k < NumBlendContainers - 1; k++)
     {
         int pIndex = NumBlendContainers - 1 - k;
         BlendContainer blendContainer = BlendContainers[pIndex];
 
-        uint parentBlendFunc = BlendContainers[pIndex].parentBlendFunc;
-        float parentDistance = distances[blendContainer.parentIndex];
-        float distance = distances[pIndex];
+        uint parentBlendFunc = blendContainer.parentBlendFunc;
+        parentData = datas[blendContainer.parentIndex];
+        data = datas[pIndex];
 
-        distances[blendContainer.parentIndex] = GetBlendDistance(parentBlendFunc, parentDistance, distance);
+        datas[blendContainer.parentIndex] = GetBlendDistance(
+            parentBlendFunc, 
+            blendContainer.isSmoothBlend,
+            blendContainer.smoothFactor,
+            parentData, 
+            data);
     }
 
-    return distances[0];
+    return datas[0];
 }
 
 float3 GetNormal(float3 pos)
 {
     float2 eplison = float2(0.01, 0);
-    float3 normal = SceneSDF(pos) - float3(
-        SceneSDF(pos - eplison.xyy),
-        SceneSDF(pos - eplison.yxy),
-        SceneSDF(pos - eplison.yyx)
+    float3 normal = SceneSDF(pos).w - float3(
+        SceneSDF(pos - eplison.xyy).w,
+        SceneSDF(pos - eplison.yxy).w,
+        SceneSDF(pos - eplison.yyx).w
         );
 
     return normalize(normal);
 }
 
-float Raymarch(float3 ray_origin, float3 ray_direction)
+float4 Raymarch(float3 ray_origin, float3 ray_direction)
 {
     float dist_from_origin = 0.0f;
-    float dist_to_surface;
+    float4 data;
 
     for (int i = 0; i < MAX_STEPS; i++)
     {
         float3 current_pos = ray_origin + dist_from_origin * ray_direction;
 
-        dist_to_surface = SceneSDF(current_pos);
+        data = SceneSDF(current_pos);
 
-        dist_from_origin += dist_to_surface;
+        dist_from_origin += data.w;
 
-        if (dist_to_surface < MIN_HIT_DIST || dist_from_origin > MAX_TRACE_DIST)
+        if (data.w < MIN_HIT_DIST || dist_from_origin > MAX_TRACE_DIST)
             break;
     }
 
-    return dist_from_origin;
+    return float4(data.rgb, dist_from_origin);
 }
 
-[numthreads(6,6,1)]
+[numthreads(8,8,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
     // TODO: insert actual code here!
@@ -201,13 +246,13 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     ray_direction = mul(CamToWorld, float4(ray_direction, 0)).xyz;
     ray_direction = normalize(ray_direction);
 
-    float distance = Raymarch(ray_origin, ray_direction);
+    float4 data = Raymarch(ray_origin, ray_direction);
 
-    if (distance < MAX_TRACE_DIST)
+    if (data.w < MAX_TRACE_DIST)
     {
-        float3 normal = GetNormal(ray_origin + ray_direction * distance);
-        Result[id.xy] = float4(normal.x, normal.y, normal.z, 1.0);
+        float3 normal = GetNormal(ray_origin + ray_direction * data.w);
+        Result[id.xy] = float4(data.xyz, 1.0);
     }
     else
-        Result[id.xy] = float4(0, 1, 1, 1.0);
+        Result[id.xy] = Source[id.xy];
 }
